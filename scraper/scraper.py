@@ -5,6 +5,7 @@ import typing
 import time
 import logging
 from tqdm import tqdm
+import os 
 
 logging.basicConfig(
     filename="logs/scraper.log",
@@ -45,6 +46,12 @@ def get_page_info(max_pages: int, start_page: int):
 
     film_dict = {}
 
+    try:
+        with open("data/movie_info.json") as f:
+            preloaded_data = json.load(f)
+    except Exception:
+        preloaded_data = {}
+
     for i in tqdm(range(max_pages)):
         start = time.time()
         logger.info(f"=================== Reading page {i+1} =================== ")
@@ -72,8 +79,11 @@ def get_page_info(max_pages: int, start_page: int):
                     logger.error(f"Data block could not be created")
                     continue
 
-                # print(f"https://letterboxd.com/film/{metadata['slug']}/")
-                temp_metadata = get_detailed_info(f"https://letterboxd.com/film/{metadata['slug']}/")
+                movie_url = f"https://letterboxd.com/film/{metadata['slug']}/"
+                if preloaded_data.get(movie_url):
+                    logger.warning(f"Metadata already exists for {block.get('data-item-slug')}")
+                    continue
+                temp_metadata = get_detailed_info(movie_url)
 
                 if temp_metadata.get("Error"):
                     # print(f"Error encountered for movie {metadata['slug']}")
@@ -125,18 +135,25 @@ def get_detailed_info(movie_url: str, debug=False):
     except Exception as e:
         return {"Error": f"JSON parse failed: {e}"}
 
-    #if not data.get("aggregateRating"): # If there is no rating, it means to movie has not been released yet.
-    #    return {"Error": "Not released yet"}
+    # Quality Poster Extraction
+    cache = extract_cache_key_from_soup(soup)
 
+    resp_image = requests.get(f"{movie_url}poster/std/1000/?k={cache}", headers=HEADERS).json()
+    quality_poster_url = resp_image.get("url2x") 
+    if not quality_poster_url:
+        logger.error("Quality image extraction failed.")
+        quality_poster_url = data.get("image")
+
+    # Create metadata
     metadata = {
-            "posterUrl": data.get("image"),
+            "posterUrl": quality_poster_url,
             "director": data.get("director"),
             "productionCompany": data.get("productionCompany"),
             "genre": data.get("genre"),
             "countryOfOrigin": data.get("countryOfOrigin"),
             "aggregateRating": data.get("agregateRating"),
         }
-
+    
     return metadata
 
 
@@ -149,6 +166,10 @@ def get_images(film_dict: dict):
         poster_url = key.get("posterUrl")
         movie_name = key.get("slug")
 
+        if os.path.exists(f'data/posters/{movie_name}.jpg'):
+            logger.warning(f"Image already exists for {movie_name}")
+            continue
+
         try:
             img_data = requests.get(poster_url).content
             with open(f'data/posters/{movie_name}.jpg', 'wb') as handler:
@@ -159,6 +180,25 @@ def get_images(film_dict: dict):
             continue
     end = time.time()
     log_time(start, end, logger)
+
+
+def extract_cache_key_from_soup(soup):
+    comp = soup.find("div", {
+        "data-component-class": "LazyPoster"
+    })
+
+    if not comp:
+        return None
+
+    raw = comp.get("data-resolvable-poster-path")
+    if not raw:
+        return None
+
+    try:
+        resolvable = json.loads(raw)
+        return resolvable.get("cacheBustingKey")
+    except Exception:
+        return None
         
 
 def log_time(start, end, logger):
@@ -170,11 +210,19 @@ def log_time(start, end, logger):
 
 if __name__ == "__main__":
     logger.info("Starting scraper")
-    film_dict = get_page_info(max_pages=2000, start_page=2000)
+    film_dict = get_page_info(max_pages=1, start_page=2000)
+
+    try:
+        with open("data/movie_info.json") as f:
+            old_data = json.load(f)
+    except:
+        old_data = {}
+    old_data.update(film_dict)
     with open("data/movie_info.json", "w") as f:
-        json.dump(film_dict, f, indent=2)
+        json.dump(old_data, f, indent=2)
 
     with open("data/movie_info.json") as f:
             data = json.load(f)
 
+    logger.info("Starting image downloads")
     get_images(data)
