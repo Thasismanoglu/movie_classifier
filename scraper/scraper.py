@@ -6,6 +6,7 @@ import time
 import logging
 from tqdm import tqdm
 import os 
+import threading
 
 logging.basicConfig(
     filename="logs/scraper.log",
@@ -139,19 +140,20 @@ def get_detailed_info(movie_url: str, debug=False):
     cache = extract_cache_key_from_soup(soup)
 
     resp_image = requests.get(f"{movie_url}poster/std/1000/?k={cache}", headers=HEADERS).json()
-    quality_poster_url = resp_image.get("url2x") 
-    if not quality_poster_url:
+    quality_poster_url_2x = resp_image.get("url2x") 
+    quality_poster_url_1x = resp_image.get("url") 
+    if not quality_poster_url_2x:
         logger.error("Quality image extraction failed.")
-        quality_poster_url = data.get("image")
 
     # Create metadata
     metadata = {
-            "posterUrl": quality_poster_url,
+            "qualityPosterUrl2x": quality_poster_url_2x,
+            "qualityPosterUrl1x": quality_poster_url_1x,
+            "posterUrl": data.get("image"),
             "director": data.get("director"),
             "productionCompany": data.get("productionCompany"),
             "genre": data.get("genre"),
             "countryOfOrigin": data.get("countryOfOrigin"),
-            "aggregateRating": data.get("agregateRating"),
         }
     
     return metadata
@@ -208,7 +210,113 @@ def log_time(start, end, logger):
     logger.info(f"{minutes}m {seconds:02d}s")
 
 
-if __name__ == "__main__":
+### Trying to use multi-threading
+
+
+def single_page_info(page_url):
+    """
+    https://letterboxd.com/films/popular/
+    Goes to the link above and retrieves information about the movies there. 
+    NOTE: Does not get movie poster URL's. For that, you need to visit the main page of each movie. This will be done in 'get_poster_urls'.
+    
+    """
+    tid = threading.get_ident()
+
+    film_dict = {}
+
+    try:
+        with open("data/movie_info.json") as f:
+            preloaded_data = json.load(f)
+    except Exception:
+        preloaded_data = {}
+
+    start = time.time()
+    logger.info(f"=================== Reading page {page_url} =================== ")
+    try:
+        resp = requests.get(page_url, headers=HEADERS)
+        soup = BeautifulSoup(resp.text, features="html.parser")
+                
+        data = soup.select("li.posteritem")
+        for data_block in data:
+            block = data_block.find("div", class_="react-component")
+
+            if block:
+                metadata = {
+                    "title": block.get("data-item-full-display-name"),
+                    "slug": block.get("data-item-slug"),
+                    "film_id": block.get("data-film-id"),
+                    "details": block.get("data-details-endpoint"),
+                    "poster_url": block.get("data-poster-url"),
+                    "page_link": block.get("data-item-link"),
+                    "rating": data_block.get("data-average-rating")
+                }
+            else:
+                logger.error(f"Data block could not be created")
+                continue
+
+            movie_url = f"https://letterboxd.com/film/{metadata['slug']}/"
+            if preloaded_data.get(movie_url):
+                logger.warning(f"Metadata already exists for {block.get('data-item-slug')}")
+                continue
+            temp_metadata = get_detailed_info(movie_url)
+
+            if temp_metadata.get("Error"):
+                # print(f"Error encountered for movie {metadata['slug']}")
+                logger.error(f"Error encountered for movie {metadata['slug']}. Error: {temp_metadata.get('Error')}")
+                logger.error(f"https://letterboxd.com/film/{metadata['slug']}/")
+                continue
+
+            for key, value in temp_metadata.items():
+                metadata[key] = value
+
+            film_dict[f"https://letterboxd.com/film/{metadata['slug']}/"] = metadata # type: ignore
+            logger.info(f"Succesfull - https://letterboxd.com/film/{metadata['slug']}/ - ThreadID: {tid}")
+            time.sleep(0.2)
+        end = time.time()
+        log_time(start, end, logger)
+    except Exception as e:
+        logger.error(e)
+        with open("data/movie_info.json", "w") as f:
+            json.dump(film_dict, f, indent=2)
+
+    return film_dict
+
+def multithread_scraping(websites):
+    all_results = {}
+    for i in tqdm(range(0, len(websites), 5)):
+        website_batch = websites[i: i+5]
+
+        threads = []
+        results = []
+
+        def run_and_store(url):
+            res = single_page_info(url)
+            results.append(res)
+
+        for url in website_batch:
+            thread = threading.Thread(target=run_and_store, args=(url,))
+            threads.append(thread)
+            thread.start()
+        
+        for thread in threads:
+            thread.join()
+
+        for r in results:
+            all_results.update(r)
+
+        with open("data/movie_info_checkpoint.json", "w") as f:
+            json.dump(all_results, f, indent=2)    
+    return all_results
+
+
+def populate_page_urls(start_page, end_page):
+    websites = []
+    for i in range(start_page, end_page+1):
+        websites.append(f"https://letterboxd.com/films/ajax/popular/page/{i}/?esiAllowFilters=true")
+    return websites
+
+
+def main():
     logger.info("Starting scraper")
     film_dict = get_page_info(max_pages=1, start_page=2000)
 
@@ -226,3 +334,13 @@ if __name__ == "__main__":
 
     logger.info("Starting image downloads")
     get_images(data)
+    
+
+def main_mthread():
+    websites = populate_page_urls(start_page=1, end_page=10)
+    multithread_scraping(websites)
+
+if __name__ == "__main__":
+    main_mthread()
+    
+
