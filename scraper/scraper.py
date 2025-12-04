@@ -105,7 +105,7 @@ def get_page_info(max_pages: int, start_page: int):
                 with open("data/movie_info_checkpoint.json", "w") as f:
                     json.dump(film_dict, f, indent=2)
 
-            time.sleep(1)
+            time.sleep(5)
 
         except Exception as e:
             logger.error(e)
@@ -337,8 +337,12 @@ def main():
     
 
 def main_mthread():
-    websites = populate_page_urls(start_page=1, end_page=10)
-    multithread_scraping(websites)
+    websites = populate_page_urls(start_page=2001, end_page=4000)
+    results = multithread_scraping(websites)
+
+    with open("data/movie_info.json", "w") as f:
+        json.dump(results, f, indent=2)
+
 
 if __name__ == "__main__":
     main_mthread()
