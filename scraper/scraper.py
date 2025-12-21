@@ -184,6 +184,46 @@ def get_images(film_dict: dict):
     log_time(start, end, logger)
 
 
+def multithread_get_images(film_dict: dict, batch_size: int = 10):
+    start = time.time()
+    items = list(film_dict.items())
+
+    for i in tqdm(range(0, len(items), batch_size)):
+        batch = items[i:i + batch_size]
+        threads = []
+
+        def run_and_store(item, key):
+            poster_url = key.get("posterUrl")
+            movie_name = key.get("slug")
+
+            if not poster_url or not movie_name:
+                return
+
+            path = f"data/posters/{movie_name}.jpg"
+            if os.path.exists(path):
+                logger.warning(f"Image already exists for {movie_name}")
+                return
+
+            try:
+                img_data = requests.get(poster_url, timeout=10).content
+                with open(path, "wb") as f:
+                    f.write(img_data)
+                logger.info(f"Image download/upload successful - {movie_name}")
+            except Exception as e:
+                logger.error(f"Error downloading image {movie_name}: {e}")
+
+        for item, key in batch:
+            t = threading.Thread(target=run_and_store, args=(item, key))
+            threads.append(t)
+            t.start()
+
+        for t in threads:
+            t.join()
+
+    end = time.time()
+    log_time(start, end, logger)
+
+
 def extract_cache_key_from_soup(soup):
     comp = soup.find("div", {
         "data-component-class": "LazyPoster"
@@ -345,6 +385,12 @@ def main_mthread():
 
 
 if __name__ == "__main__":
-    main_mthread()
+    # main_mthread()
+    with open("data/movie_info.json") as f:
+        data = json.load(f)
+
+    # logger.info("Starting image downloads")
+    # get_images(data)
+    multithread_get_images(data, 10)
     
 
