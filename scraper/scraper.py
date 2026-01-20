@@ -386,7 +386,7 @@ def main_mthread():
 
 if __name__ == "__main__":
     # main_mthread()
-    with open("data/movie_info.json") as f:
+    with open("data/movie_info_2.json") as f:
         data = json.load(f)
 
     # logger.info("Starting image downloads")
