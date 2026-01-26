@@ -1,0 +1,8 @@
+beautifulsoup4
+pillow
+requests
+tqdm
+torchvision
+torch 
+pandas
+torchmetrics

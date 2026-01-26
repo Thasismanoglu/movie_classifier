@@ -1,0 +1,6 @@
+/logs
+/data
+
+
+*.DS_Store
+*.pth
